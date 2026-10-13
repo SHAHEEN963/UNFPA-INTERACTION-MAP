@@ -62,11 +62,11 @@
         <div class="map-card">
           <div class="map-card-head"><div class="map-card-title"><span class="status-dot"></span><strong data-i18n="mapCoverage">Map coverage</strong><span id="matchCount" class="match-count">0 locations</span></div><div class="map-card-right"><span class="map-hint" data-i18n="mapHint">Select a marker to explore</span><button class="text-button reset-map" id="fitMapBtn" type="button"><span aria-hidden="true">⌖</span> <span data-i18n="fit">Fit locations</span></button></div></div>
           <div class="map-stage" id="mapStage">
-            <svg id="mapSvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-label="Map showing facility markers in Syria"><rect class="sea" x="-900" y="-800" width="3300" height="2600"/><g id="landWorld"></g><g id="mapCities"></g><g id="mapMarkers"></g></svg>
+            <svg id="mapSvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-label="Map showing facility markers in Syria"><rect class="sea" x="-900" y="-800" width="3300" height="2600"/><g id="landWorld"></g><g id="mapCities"></g></svg><div id="cityLabels" class="map-city-labels" aria-hidden="true"></div><div id="mapPins" class="map-pin-layer"></div>
             <div id="mapTooltip" class="map-tooltip" role="status" hidden></div>
             <div class="map-floating-label" data-i18n="mapLabel">SYRIA · 4 GOVERNORATES</div>
-            <div class="map-controls" role="group" aria-label="Map controls"><button id="zoomInBtn" type="button" aria-label="Zoom in" title="Zoom in">+</button><button id="zoomOutBtn" type="button" aria-label="Zoom out" title="Zoom out">−</button><button id="fullMapBtn" type="button" aria-label="Reset map view" title="Reset map view">⌖</button></div>
-            <div class="gesture-tip" id="gestureTip" data-i18n="gestureTip">Drag to move · Scroll to zoom</div>
+            <div class="map-controls" role="group" aria-label="Map controls"><button id="zoomInBtn" type="button" aria-label="Zoom in" title="Zoom in">+</button><button id="zoomOutBtn" type="button" aria-label="Zoom out" title="Zoom out">−</button><button id="fullMapBtn" type="button" aria-label="Show all Syria" title="Show all Syria">⌖</button></div>
+            <div class="gesture-tip" id="gestureTip" data-i18n="gestureTip">Drag to pan · Scroll to zoom</div>
           </div>
           <div class="map-footer"><div class="legend"><span class="legend-title" data-i18n="programmes">PROGRAMMES</span><span><i class="legend-dot rh"></i><span data-i18n="rh">Reproductive health</span></span><span><i class="legend-dot gbv"></i><span data-i18n="gbv">GBV</span></span><span><i class="legend-dot youth"></i><span data-i18n="youth">Youth</span></span></div><span class="data-note" data-i18n="localOnly">Private data stays on your device</span></div>
         </div>

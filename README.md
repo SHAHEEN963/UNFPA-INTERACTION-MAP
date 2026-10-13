@@ -2,6 +2,19 @@
 
 A simplified, mobile-first website with the **user-supplied UNFPA SVG logo** and colors extracted from the logo (`#3571A4` blue, `#E38A15` orange). It remains a **static, offline-map** site: no application API, no authentication, no backend, no facility database, and no third-party map tiles.
 
+## October 13 map and zoom corrections (v3)
+
+- **Whole Syria visible by default:** the initial camera fits the actual Syria outline, across desktop and mobile widths. The Reset / crosshair button always returns to the whole-country view, including after importing facility data.
+- **Stable scale at any zoom:** city names and facility badges render in fixed CSS pixels above the geographic SVG. This corrects the giant letters, partial circles, and white-looking marker artifacts that appeared in the screenshots.
+- **Georeferenced precision:** original WGS84 geographic input is used as supplied by `facilities.private.json`; horizontal coordinate X is longitude, vertical coordinate Y is latitude. Each **unclustered** site marker is placed at its corresponding projected X/Y position. The separate confidential JSON stores the original input and any earlier documented coordinate-conversion/reversal flags; this update does not change any source coordinates.
+- **Readable overview:** the zoomed-out map shows one aggregate badge per governorate. Clusters are *visual aggregates*, not exact facility positions. Zooming in progressively separates facilities; shared-coordinate sites open a selection list instead of hiding individual records.
+- **Smarter zoom:** plus/minus, cursor-wheel, double-click, pan and mobile two-finger pinch supported. The plus button moves toward service coverage on an unfiltered overview, instead of magnifying unpopulated eastern areas. Maximum/minimum zoom and camera focal-point bounds are constrained.
+- **City orientation guides:** thin orange dashed lines link Lattakia–Tartous, Lattakia–Hama, Hama–Homs and Tartous–Homs. **They are schematic visual guides, not surveyed roads or transport routes.** The lines recede at close zoom to avoid visual clutter.
+- **Mobile:** smaller aggregation bubbles, reduced map-label collisions, 45-pixel tap targets, and scroll-friendly touch behavior. The four governorate buttons remain available above the map.
+- **Favicon:** the actual user-provided UNFPA logo artwork on a transparent SVG canvas, with no colored square, border, or additional shape.
+
+The code has no login, no API, no backend, and no sensitive facility records embedded or committed.
+
 ## Changes in this version
 
 - Large distraction-free Syria map, simpler header and streamlined statistics.
