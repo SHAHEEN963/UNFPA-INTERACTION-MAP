@@ -54,3 +54,23 @@ body[dir=rtl] .advanced-filters{right:auto;left:0}body[dir=rtl] .map-stage,body[
  .map-pin.map-pin-cluster .pin-disc{width:27px;height:27px;font-size:10px;border-width:2.5px}
  .map-pin:hover .pin-disc,.map-pin:focus-visible .pin-disc{transform:scale(1.11)}
 }
+
+/* V4: one marker per record, no cluster counts, crisp zoom at every scale. */
+.city-guide{display:none!important}
+.map-pin-guides{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:2}
+.map-pin-layer{z-index:3}
+.pin-tether{position:absolute;height:1px;background:rgba(64,116,150,.26);transform-origin:left center;pointer-events:none}
+.map-pin.map-pin-single{width:24px;height:24px;z-index:4;cursor:pointer;transition:none}
+.map-pin.map-pin-single .pin-disc{width:11px;height:11px;border:2px solid white;background:var(--pin-color);box-shadow:0 2px 6px #224c6860,0 0 0 .5px #457b9a66;transition:transform .14s ease,box-shadow .14s ease}
+.map-pin.map-pin-single:hover,.map-pin.map-pin-single:focus-visible{z-index:15}
+.map-pin.map-pin-single:hover .pin-disc,.map-pin.map-pin-single:focus-visible .pin-disc{transform:scale(1.48);box-shadow:0 3px 10px #17456b99,0 0 0 3px #f1ac4680}
+.map-city-label{opacity:.84;font-size:11px;filter:drop-shadow(0 1px 0 #fff)}
+.map-city-label span{background:#ffffffb9;box-shadow:none}
+.map-city-dot{display:none}
+.map-stage{overscroll-behavior:contain}
+@media(max-width:680px){
+ .map-pin.map-pin-single{width:27px;height:27px}
+ .map-pin.map-pin-single .pin-disc{width:11px;height:11px}
+ .map-tooltip{max-width:min(235px,calc(100vw - 40px))}
+ .map-controls{z-index:9}
+}
