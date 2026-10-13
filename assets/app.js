@@ -1,336 +1,108 @@
 'use strict';
-// Standalone, entirely client-side site. Facility records are loaded from a user-selected local file only.
-const $=id=>document.getElementById(id);
-const svgNS='http://www.w3.org/2000/svg';
-const colors={RH:'#219d91',GBV:'#d87991',Youth:'#d4a252'};
-const regions=['Lattakia','Tartous','Hama','Homs'];
-const $all=sel=>Array.from(document.querySelectorAll(sel));
-const state={records:[],summary:null,geo:null,view:'map',lang:'en',selected:null,filtered:[],map:{x:0,y:0,w:1200,h:760},gesture:null,animation:null,mapReady:false};
-const escapeHTML=value=>String(value===undefined||value===null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const isRtl=s=>/[\u0600-\u06ff]/.test(s);
-const pretty=s=>s?String(s).trim():(state.lang==='ar'?'غير متوفر':'Not recorded');
-const programLabel=p=>({RH:'Reproductive Health',GBV:'GBV / Protection',Youth:'Youth'}[p]||p);
-const colour=p=>colors[p]||'#385c68';
-function showToast(message){const el=$('toast');el.textContent=message;el.hidden=false;clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>el.hidden=true,2800)}
-// No HTTP API, accounts, cookies, or authentication.
-function makeSummary(records){
-  const s={total:records.length,governorates:{},programs:{RH:0,GBV:0,Youth:0},partners:{}};
-  for(const region of regions)s.governorates[region]=0;
-  for(const r of records){
-    s.governorates[r.governorate_en]=(s.governorates[r.governorate_en]||0)+1;
-    s.programs[r.main_program]=(s.programs[r.main_program]||0)+1;
-    const p=r.implementing_partner||'Unspecified';s.partners[p]=(s.partners[p]||0)+1;
-  }
-  return s;
-}
-function initializeDashboard(){
-  state.geo=window.SYRIA_GEOGRAPHY;
-  if(!state.geo)throw Error('The bundled Syria map could not be loaded.');
-  $('todayDate').textContent=new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric'}).format(new Date());
-  state.summary=makeSummary([]);
-  initData();initMap();setView('map');applyLanguage();
-}
-function useRecords(records){
-  if(!Array.isArray(records)||records.length>20000)throw Error('Please select a valid JSON array (maximum 20,000 records).');
-  if(records.length&&!records.every(r=>r&&typeof r==='object'&&typeof r.facility_code==='string'&&typeof r.main_program==='string'&&typeof r.governorate_en==='string'))throw Error('This is not a supported facilities JSON file.');
-  state.records=records.map((r,i)=>({...r,id:String(r.id||r.facility_code||i),lat:r.lat!==null&&r.lat!==undefined&&r.lat!==''&&Number.isFinite(Number(r.lat))?Number(r.lat):null,lon:r.lon!==null&&r.lon!==undefined&&r.lon!==''&&Number.isFinite(Number(r.lon))?Number(r.lon):null,quality_flags:Array.isArray(r.quality_flags)?r.quality_flags:[]}));
-  state.summary=makeSummary(state.records);
-  for(const id of ['mapSearch','governorateFilter','programFilter','partnerFilter','typeFilter','directorySearch','directoryGov','directoryProgram'])$(id).value='';
-  $('importCallout').hidden=true;
-  $('downloadBtn').hidden=!records.length;
-  $('filterRoleNotice').textContent='Loaded only in this browser tab. No upload or server storage.';
-  initData();closeDrawer();flyFitFacilities();
-  showToast(records.length+' facility records loaded locally');
-}
-$('importBtn').addEventListener('click',()=>$('dataFile').click());
-$('calloutImportBtn').addEventListener('click',()=>$('dataFile').click());
-$('dataFile').addEventListener('change',async event=>{
-  const file=event.target.files?.[0];if(!file)return;
-  try{if(file.size>20*1024*1024)throw Error('File too large (20 MB maximum).');useRecords(JSON.parse(await file.text()));}
-  catch(err){console.error(err);showToast('Could not load data: '+err.message)}
-  finally{event.target.value='';}
-});
-$('downloadBtn').addEventListener('click',()=>{
-  if(!state.records.length)return;
-  if(!confirm('Export includes private addresses and coordinates. Continue and keep the CSV confidential?'))return;
-  const columns=['implementing_partner','facility_code','main_program','facility_type','mode','governorate','district','subdistrict','commune','neighbourhood','site_name','lat','lon','brochure'];
-  const csv=[columns,...state.records.map(r=>columns.map(k=>r[k]??''))].map(row=>row.map(v=>'"'+String(v).replace(/^[=+@-]/, '\u0027$&').replace(/"/g,'""')+'"').join(',')).join('\r\n');
-  const blob=new Blob(['\ufeff',csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');
-  a.href=url;a.download='syria-facilities-private.csv';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
-});
-
-function addOptions(sel,items,defaultLabel){const el=$(sel);el.innerHTML='';const option=document.createElement('option');option.value='';option.textContent=defaultLabel;el.append(option);for(const v of items){const o=document.createElement('option');o.value=v;o.textContent=v;el.append(o)}}
-function initData(){
-  addOptions('governorateFilter',regions,'All governorates');addOptions('directoryGov',regions,'All governorates');
-  addOptions('programFilter',['RH','GBV','Youth'],'All programmes');addOptions('directoryProgram',['RH','GBV','Youth'],'All programmes');
-  addOptions('partnerFilter',[...new Set(state.records.map(r=>r.implementing_partner))].sort(),'All partners');
-  addOptions('typeFilter',[...new Set(state.records.map(r=>r.facility_type))].sort(),'All facility types');
-  $('navRegions').innerHTML=regions.map(r=>`<button class="region-link" data-region="${escapeHTML(r)}"><i></i>${escapeHTML(r)}<span>${(state.summary.governorates[r]||0)}</span></button>`).join('');
-  $all('[data-region]').forEach(btn=>btn.addEventListener('click',()=>{$('governorateFilter').value=btn.dataset.region;setView('map');updateMapFilters();zoomRegion(btn.dataset.region)}));
-  if(state.controlsWired){renderInsights();renderQuality();updateMapFilters();renderDirectory();return;}
-  state.controlsWired=true;
-  for(const sel of ['mapSearch','governorateFilter','programFilter','partnerFilter','typeFilter']){$(sel).addEventListener('input',updateMapFilters)}
-  $('resetFilters').addEventListener('click',()=>{for(const id of ['mapSearch','governorateFilter','programFilter','partnerFilter','typeFilter'])$(id).value='';updateMapFilters();flyFullSyria()});
-  for(const sel of ['directorySearch','directoryGov','directoryProgram'])$(sel).addEventListener('input',renderDirectory);
-  renderInsights();renderQuality();updateMapFilters();renderDirectory();
-}
-function searchText(record,query){return [record.facility_code,record.implementing_partner,record.main_program,record.facility_type,record.mode,record.governorate,record.district,record.subdistrict,record.commune,record.neighbourhood,record.site_name,record.brochure].join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase().trim())}
-function updateStats(records){
-  $('statFacilities').textContent=records.length;
-  $('statPartners').textContent=new Set(records.map(r=>r.implementing_partner)).size;
-  $('statRH').textContent=records.filter(r=>r.main_program==='RH').length;
-  $('statOther').textContent=records.filter(r=>r.main_program!=='RH').length;
-}
-function updateMapFilters(){
-  const q=$('mapSearch').value.trim().toLocaleLowerCase();const gov=$('governorateFilter').value,p=$('programFilter').value,partner=$('partnerFilter').value,type=$('typeFilter').value;
-  state.filtered=state.records.filter(r=>(!gov||r.governorate_en===gov)&&(!p||r.main_program===p)&&(!partner||r.implementing_partner===partner)&&(!type||r.facility_type===type)&&(!q||searchText(r,q)));
-  $('filterCount').textContent=state.filtered.length;
-  $('resultTrack').style.width=(state.filtered.length/Math.max(state.records.length,1)*100).toFixed(1)+'%';
-  $('mapMarkerCaption').textContent=state.records.length ? state.filtered.length+' matching records · click markers for facility details' : 'Select Load private JSON to display facility markers';
-  $all('[data-region]').forEach(b=>b.classList.toggle('selected',b.dataset.region===gov));
-  updateStats(state.filtered);renderMarkers();
-}
-
-function setView(name){
-  state.view=name;
-  $all('.view-panel').forEach(p=>p.classList.toggle('active',p.dataset.panel===name));
-  $all('.nav-link').forEach(b=>b.classList.toggle('active',b.dataset.view===name));
-  const names={map:'Map Explorer',directory:'Facility Directory',insights:'Statistics & Insights',quality:'Data Quality'};
-  $('breadCurrent').textContent=names[name];$('pageTitle').innerHTML=escapeHTML(({map:'Syria Facilities Explorer',directory:'Facilities Directory',insights:'Coverage & Insights',quality:'Data Quality Review'})[name])+' <span class="heading-star">✳</span>';
-  $('pageSubtitle').textContent=({map:'An integrated geographic view of programmes, partners, and service locations.',directory:'A searchable inventory of detailed service facility records.',insights:'A clear view of programme coverage and implementing partnerships.',quality:'Coordinate normalization and completeness checks from the source workbook.'})[name];
-  if(name==='map'){requestAnimationFrame(()=>{correctAspect();renderMarkers()})}
-  window.scrollTo({top:0,behavior:'smooth'});
-  if(state.lang==='ar')applyLanguage();
-}
-$all('.nav-link').forEach(b=>b.addEventListener('click',()=>setView(b.dataset.view)));
-
-function renderDirectory(){
-  const q=$('directorySearch').value.trim().toLowerCase(),gov=$('directoryGov').value,p=$('directoryProgram').value;
-  const records=state.records.filter(r=>(!gov||r.governorate_en===gov)&&(!p||r.main_program===p)&&(!q||searchText(r,q))).sort((a,b)=>a.governorate_en.localeCompare(b.governorate_en)||a.facility_code.localeCompare(b.facility_code));
-  $('directoryCount').textContent=records.length+' records';$('directoryEmpty').hidden=records.length>0;
-  $('directoryBody').innerHTML=records.map(r=>`<tr><td><span class="code-cell">${escapeHTML(r.facility_code)}</span><small class="sub-cell">${escapeHTML(r.site_name||r.commune||'Address not listed')}</small></td><td><span class="table-badge ${escapeHTML(r.main_program.toLowerCase())}">${escapeHTML(r.main_program)}</span></td><td>${escapeHTML(r.facility_type)}</td><td>${escapeHTML(r.governorate_en)}</td><td>${escapeHTML(r.implementing_partner)}</td><td><button class="record-view" data-record="${escapeHTML(r.id)}">View ↗</button></td></tr>`).join('');
-  $('directoryBody').querySelectorAll('[data-record]').forEach(b=>b.addEventListener('click',()=>openFacility(b.dataset.record)));
-}
-function renderInsights(){
-  const s=state.summary;if(!s)return;
-  const max=Math.max(1,...Object.values(s.governorates));
-  $('insightGovernorates').innerHTML=regions.map(k=>`<div class="bar-row"><div class="bar-row-head"><span>${escapeHTML(k)}</span><b>${s.governorates[k]} facilities</b></div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(s.governorates[k]/max*100)}%"></div></div></div>`).join('');
-  $('insightTotal').textContent=s.total;
-  const total=s.total;let offset=0;const stops=['RH','GBV','Youth'].map(p=>{const from=offset;offset+=(total?s.programs[p]/total*100:0);return `${colour(p)} ${from.toFixed(3)}% ${offset.toFixed(3)}%`});
-  $('programDonut').style.background=total?`conic-gradient(${stops.join(',')})`:'conic-gradient(#e2eeec 0% 100%)';
-  $('donutLegend').innerHTML=['RH','GBV','Youth'].map(p=>`<div class="donut-key"><i class="legend-dot ${p.toLowerCase()}"></i>${escapeHTML(p)}<b>${s.programs[p]}</b></div>`).join('');
-  $('insightPartners').innerHTML=Object.entries(s.partners).sort((a,b)=>b[1]-a[1]).map(([p,n])=>`<div class="partner-row"><span>${escapeHTML(p)}</span><b>${n}</b></div>`).join('');
-}
-function renderQuality(){
-  const rows=state.records.filter(r=>r.quality_flags?.length);
-  $('qualityCount').textContent=rows.length+' flagged records';
-  $('qualityList').innerHTML=rows.length?rows.map(r=>`<article class="quality-row"><div><h4>${escapeHTML(r.facility_code)}</h4><p>${escapeHTML(r.governorate_en)} · Source row ${r.source_row} · ${escapeHTML(r.implementing_partner)}</p>${r.quality_flags.map(f=>`<span class="quality-flag">${escapeHTML(f)}</span>`).join('')}</div><button class="record-view" data-qa-record="${escapeHTML(r.id)}">Review ↗</button></article>`).join(''):'<div class="empty">No flagged facilities.</div>';
-  $('qualityList').querySelectorAll('[data-qa-record]').forEach(b=>b.addEventListener('click',()=>openFacility(b.dataset.qaRecord)));
-}
-function regionInfo(r){return `${r.governorate_en} · ${r.district||'District not recorded'}`}
-function field(label,value,wide=false){label=state.lang==='ar'?(AR_FIELDS[label]||label):label;return `<div class="info-field${wide?' wide':''}"><label>${escapeHTML(label)}</label><div dir="auto">${escapeHTML(pretty(value))}</div></div>`}
-function closeDrawer(){$('detailDrawer').hidden=true;$('drawerShade').hidden=true;state.selected=null;}
-$('drawerShade').addEventListener('click',closeDrawer);
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer()});
-const AR_FIELDS={'Final implementing partner':'الشريك المنفذ النهائي','Facility code':'رمز المنشأة','Main programme':'البرنامج الرئيسي','Main facility type':'نوع المنشأة','Mode of facility':'وضع المنشأة','Governorate | المحافظة':'المحافظة','District | المنطقة':'المنطقة','Sub district | الناحية':'الناحية','Commune / village / town':'البلدة / القرية / المدينة','Neighbourhood | الحي':'الحي','Site name / detailed address | العنوان':'اسم الموقع والعنوان التفصيلي','Latitude':'خط العرض','Longitude':'خط الطول','Source worksheet':'ورقة المصدر','Source row':'رقم الصف','Original latitude':'خط العرض الأصلي','Original longitude':'خط الطول الأصلي'};
-function openFacility(code){
-  const r=state.records.find(x=>x.id===code);
-  if(!r){showToast('This record is not loaded.');return}
-  state.selected=r;
-  const loc=[r.lat,r.lon].map(n=>n===null?'—':n.toFixed(6)).join(', ');
-  $('drawerContent').innerHTML=`<div class="drawer-head"><div class="drawer-top"><span class="eyebrow"><span class="pulse-dot"></span> FACILITY RECORD • LOCAL DATA</span><button id="drawerClose" class="drawer-close" aria-label="Close details">×</button></div><h2>${escapeHTML(r.facility_code)}</h2><div class="drawer-subtitle">${escapeHTML(regionInfo(r))}</div><div class="drawer-tag-row"><span class="drawer-tag">${escapeHTML(programLabel(r.main_program))}</span><span class="drawer-tag">${escapeHTML(r.facility_type)}</span><span class="drawer-tag">${escapeHTML(r.implementing_partner)}</span></div></div><div class="drawer-content-body"><div class="drawer-section-heading">IDENTITY & PROGRAMME</div><div class="info-grid">${field('Final implementing partner',r.implementing_partner)}${field('Facility code',r.facility_code)}${field('Main programme',r.main_program)}${field('Main facility type',r.facility_type)}${field('Mode of facility',r.mode,true)}</div><div class="drawer-section-heading">GEOGRAPHY & ADDRESS</div><div class="info-grid">${field('Governorate | المحافظة',r.governorate)}${field('District | المنطقة',r.district)}${field('Sub district | الناحية',r.subdistrict)}${field('Commune / village / town',r.commune)}${field('Neighbourhood | الحي',r.neighbourhood,true)}${field('Site name / detailed address | العنوان',r.site_name,true)}${field('Latitude',r.lat)}${field('Longitude',r.lon)}</div><div class="drawer-actions"><button class="drawer-action" id="copyCode">▧ Copy facility code</button><button class="drawer-action" id="copyCoords">⌖ Copy coordinates</button><button class="drawer-action" id="locateRecord">◎ Locate on map</button></div><div class="drawer-section-heading">DETAILED INFORMATION FOR BROCHURE</div><div class="brochure-content" dir="auto">${escapeHTML(r.brochure||'Not provided')}</div><div class="drawer-section-heading">SOURCE & VALIDATION</div><div class="info-grid">${field('Source worksheet',r.source_sheet)}${field('Source row',r.source_row)}${field('Original latitude',r.lat_original)}${field('Original longitude',r.lon_original)}</div>${r.quality_flags?.length?`<div class="drawer-alert"><b>Data validation notes</b><br>${r.quality_flags.map(escapeHTML).join('<br>')}</div>`:''}</div>`;
-  $('detailDrawer').hidden=false;$('drawerShade').hidden=false;
-  $('drawerClose').addEventListener('click',closeDrawer);
-  $('copyCode').addEventListener('click',()=>copy(r.facility_code));
-  $('copyCoords').addEventListener('click',()=>copy(loc));
-  $('locateRecord').addEventListener('click',()=>{closeDrawer();$('governorateFilter').value='';$('programFilter').value='';$('partnerFilter').value='';$('typeFilter').value='';$('mapSearch').value='';setView('map');updateMapFilters();flyToPoint(r.lat,r.lon,105)});
-}
-async function copy(str){try{await navigator.clipboard.writeText(String(str));showToast('Copied to clipboard')}catch{showToast('Copy unavailable. Please select the text.')}}
-function openGroup(group){
-  $('drawerContent').innerHTML=`<div class="drawer-head"><div class="drawer-top"><span class="eyebrow">CO-LOCATED SERVICE POINTS</span><button id="drawerClose" class="drawer-close">×</button></div><h2>${group.length} facilities at this location</h2><div class="drawer-subtitle">Choose a record to inspect full service details</div></div><div class="drawer-content-body">${group.map(r=>`<button class="group-item" data-group-record="${escapeHTML(r.id)}"><b>${escapeHTML(r.facility_code)}</b><small>${escapeHTML(r.facility_type)} · ${escapeHTML(r.implementing_partner)}</small></button>`).join('')}</div>`;
-  $('detailDrawer').hidden=false;$('drawerShade').hidden=false;
-  $('drawerClose').addEventListener('click',closeDrawer);
-  $('drawerContent').querySelectorAll('[data-group-record]').forEach(btn=>btn.addEventListener('click',()=>openFacility(btn.dataset.groupRecord)));
-}
-
-// OFFLINE MAP - no third-party map, tile, or analytics requests are made.
-// All positions are projected from actual WGS84 lat/lon values.
-const S=(name,attrs={},parent=null)=>{const el=document.createElementNS(svgNS,name);for(const [k,v] of Object.entries(attrs))el.setAttribute(k,String(v));if(parent)parent.append(el);return el};
-function project(lat,lon){const g=state.geo;return{x:g.xOffset+(lon-g.lonMin)*g.scale*.81,y:g.yOffset+(g.latMax-lat)*g.scale}}
-function renderGeography(){
-  const g=state.geo;
-  const grid=$('mapGrid');grid.textContent='';
-  for(let lon=33;lon<=44;lon++){
-    const a=project(31.2,lon),b=project(39.2,lon);S('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:'map-grid-line'},grid)
-  }
-  for(let lat=32;lat<=39;lat++){
-    const a=project(lat,32.4),b=project(lat,44.5);S('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:'map-grid-line'},grid)
-  }
-  const world=$('landWorld');world.textContent='';
-  for(const item of g.land.filter(i=>!i.is_syria).concat(g.land.filter(i=>i.is_syria))) {
-    const p=S('path',{d:item.path,class:item.is_syria?'land-syria':'land-neighbor','data-country':item.name},world);
-    const title=S('title',{},p);title.textContent=item.name;
-  }
-  const labels=$('mapCities');labels.textContent='';
-  for(const c of g.cities){
-    S('circle',{cx:c.x,cy:c.y,r:3,class:'city-dot'},labels);
-    const name=S('text',{x:c.x+9,y:c.y+4,class:'city-label '+(regions.includes(c.name)?'main':'')},labels);name.textContent=c.name;
-  }
-  const names=[{name:'TURKEY',lat:37.82,lon:38.5},{name:'IRAQ',lat:34.5,lon:41.5},{name:'JORDAN',lat:32.4,lon:37.3},{name:'LEBANON',lat:34,lon:35.7}];
-  for(const n of names){const p=project(n.lat,n.lon),txt=S('text',{x:p.x,y:p.y,class:'city-label-neighbor','text-anchor':'middle'},labels);txt.textContent=n.name;}
-}
-function correctAspect(){
-  const el=$('mapSvg');if(!el.clientWidth||!el.clientHeight)return;
-  const ratio=el.clientHeight/el.clientWidth;
-  const v=state.map;const centerY=v.y+v.h/2;
-  v.h=v.w*ratio;v.y=centerY-v.h/2;applyViewBox();
-}
-function applyViewBox(){const v=state.map;$('mapSvg').setAttribute('viewBox',[v.x,v.y,v.w,v.h].join(' '));}
-function displayRegionMatches(){return state.filtered.filter(r=>Number.isFinite(r.lat)&&Number.isFinite(r.lon))}
-function groupMarkers(records){
-  const v=state.map,svg=$('mapSvg');const width=svg.clientWidth||900,height=svg.clientHeight||560;
-  const points=records.map(r=>({...project(r.lat,r.lon),r}));
-  const clusters=[];
-  for(const p of points){
-    let target=null;
-    for(const c of clusters){if(Math.hypot((c.x-p.x)*width/v.w,(c.y-p.y)*height/v.h)<29){target=c;break;}}
-    if(target){const n=target.records.length;target.x=(target.x*n+p.x)/(n+1);target.y=(target.y*n+p.y)/(n+1);target.records.push(p.r)}
-    else clusters.push({x:p.x,y:p.y,records:[p.r]});
-  }
-  return clusters;
-}
-function renderMarkers(){
-  if(!state.geo||!state.mapReady)return;
-  const root=$('mapMarkers');root.textContent='';
-  const clusters=groupMarkers(displayRegionMatches());const unit=state.map.w/Math.max($('mapSvg').clientWidth,1);
-  for(const c of clusters){
-    const multi=c.records.length>1;const p=c.records[0].main_program;const fill=multi&&new Set(c.records.map(r=>r.main_program)).size>1?'#395966':colour(p);
-    const node=S('g',{class:'marker-node',transform:`translate(${c.x} ${c.y})`},root);
-    S('circle',{r:(multi?22:17)*unit,fill,'class':'marker-halo'},node);
-    S('circle',{r:(multi?16:10)*unit,fill,stroke:'#fff','stroke-width':2.5*unit,'class':'marker-ring'},node);
-    if(multi){const text=S('text',{x:0,y:unit,'font-size':12*unit,class:'marker-count'},node);text.textContent=c.records.length;}
-    else S('circle',{r:2.7*unit,fill:'#fff'},node);
-    const title=S('title',{},node);title.textContent=multi?`${c.records.length} facilities · click to explore`:c.records[0].facility_code;
-    node.addEventListener('pointerdown',ev=>ev.stopPropagation());
-    node.addEventListener('click',ev=>{ev.stopPropagation();if(!multi){openFacility(c.records[0].id);return}const coords=new Set(c.records.map(r=>`${r.lat},${r.lon}`));if(state.map.w>155&&coords.size>1){flyTo({x:c.x-state.map.w*.3,y:c.y-state.map.h*.3,w:state.map.w*.6,h:state.map.h*.6});}else openGroup(c.records);});
-  }
-  const placeCount=new Set(state.filtered.map(r=>`${r.lat},${r.lon}`)).size;
-  $('mapScale').textContent=`${state.filtered.length} facilities • ${placeCount} positions`;
-}
-function flyTo(target,duration=580){
-  if(!state.mapReady)return;
-  if(state.animation)cancelAnimationFrame(state.animation);
-  const from={...state.map};const ratio=$('mapSvg').clientHeight/Math.max($('mapSvg').clientWidth,1);
-  target={...target,h:target.w*ratio};
-  const start=performance.now();const animate=now=>{const t=Math.min(1,(now-start)/duration);const eased=1-Math.pow(1-t,3);
-    for(const prop of ['x','y','w','h'])state.map[prop]=from[prop]+(target[prop]-from[prop])*eased;
-    applyViewBox();renderMarkers();if(t<1)state.animation=requestAnimationFrame(animate);else state.animation=null;
-  };state.animation=requestAnimationFrame(animate);
-}
-function flyToPoint(lat,lon,width=125){if(lat==null||lon==null)return;const p=project(lat,lon),ratio=$('mapSvg').clientHeight/Math.max($('mapSvg').clientWidth,1);flyTo({x:p.x-width/2,y:p.y-width*ratio/2,w:width})}
-function flyFullSyria(){flyTo({x:0,y:0,w:1200})}
-function flyFitFacilities(){
-  const records=displayRegionMatches();if(!records.length){flyFullSyria();return}
-  const positions=records.map(r=>project(r.lat,r.lon));const xs=positions.map(p=>p.x),ys=positions.map(p=>p.y);
-  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
-  const ratio=$('mapSvg').clientHeight/Math.max($('mapSvg').clientWidth,1);
-  const w=Math.min(1200,Math.max(190,(maxX-minX)*1.5,(maxY-minY)*1.5/ratio));const centerX=(minX+maxX)/2,centerY=(minY+maxY)/2;
-  flyTo({x:centerX-w/2,y:centerY-w*ratio/2,w});
-}
-function zoomRegion(region){const subset=state.records.filter(r=>r.governorate_en===region);if(!subset.length)return;const pts=subset.map(r=>project(r.lat,r.lon));const xx=pts.map(p=>p.x),yy=pts.map(p=>p.y);const rx=Math.max(...xx)-Math.min(...xx),ry=Math.max(...yy)-Math.min(...yy);const ratio=$('mapSvg').clientHeight/Math.max($('mapSvg').clientWidth,1);const w=Math.max(90,rx*1.8,ry*1.8/ratio);const cx=(Math.max(...xx)+Math.min(...xx))/2,cy=(Math.max(...yy)+Math.min(...yy))/2;flyTo({x:cx-w/2,y:cy-w*ratio/2,w})}
-function zoom(factor,clientX,clientY){const svg=$('mapSvg'),box=svg.getBoundingClientRect(),v=state.map;const dx=clientX===undefined?.5:(clientX-box.left)/box.width,dy=clientY===undefined?.5:(clientY-box.top)/box.height;const w=Math.max(55,Math.min(1600,v.w*factor)),h=w*box.height/box.width;const ox=v.x+dx*v.w,oy=v.y+dy*v.h;flyTo({x:ox-dx*w,y:oy-dy*h,w},300)}
-function initMap(){
-  renderGeography();state.mapReady=true;correctAspect();renderMarkers();
-  if(state.mapControlsWired)return;state.mapControlsWired=true;
-  $('fitMapBtn').addEventListener('click',flyFitFacilities);$('syriaMapBtn').addEventListener('click',flyFullSyria);
-  $('mapZoomIn').addEventListener('click',()=>zoom(.66));$('mapZoomOut').addEventListener('click',()=>zoom(1.5));
-  const svg=$('mapSvg');svg.addEventListener('wheel',e=>{e.preventDefault();zoom(e.deltaY>0?1.28:.78,e.clientX,e.clientY)},{passive:false});
-  svg.addEventListener('pointerdown',e=>{if(e.button!==0)return;state.gesture={x:e.clientX,y:e.clientY,v:{...state.map}};svg.setPointerCapture(e.pointerId);svg.classList.add('dragging');if(state.animation)cancelAnimationFrame(state.animation)});
-  svg.addEventListener('pointermove',e=>{if(!state.gesture)return;const box=svg.getBoundingClientRect(),g=state.gesture;state.map.x=g.v.x-(e.clientX-g.x)*g.v.w/box.width;state.map.y=g.v.y-(e.clientY-g.y)*g.v.h/box.height;applyViewBox();renderMarkers()});
-  const up=()=>{state.gesture=null;svg.classList.remove('dragging')};svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',up);
-  window.addEventListener('resize',()=>{if(state.mapReady)correctAspect();renderMarkers()});
-}
-
-// Arabic user-interface toggle, including RTL layout; spreadsheet field contents remain verbatim.
-const AR={
-  'Map Explorer':'مستكشف الخريطة','Facility Directory':'دليل المنشآت','Statistics & Insights':'الإحصاءات والتحليلات','Data Quality':'جودة البيانات',
-  'Syria Facilities Explorer':'خريطة المنشآت في سوريا','Facilities Directory':'دليل المنشآت','Coverage & Insights':'التغطية والتحليلات','Data Quality Review':'مراجعة جودة البيانات',
-  'Find a location':'ابحث عن موقع','Geographic distribution':'التوزيع الجغرافي','Fit facilities':'إظهار المنشآت','Full Syria':'كامل سوريا',
-  'Export records':'تصدير البيانات','All governorates':'كل المحافظات','All programmes':'كل البرامج','All partners':'كل الشركاء','All facility types':'كل أنواع المنشآت',
-  'Lattakia':'اللاذقية','Tartous':'طرطوس','Hama':'حماة','Homs':'حمص'
+// All original facility data is supplied via local file selection. Never fetched or embedded.
+const $ = id => document.getElementById(id);
+const $$ = query => [...document.querySelectorAll(query)];
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const GOVS = ['Lattakia', 'Tartous', 'Hama', 'Homs'];
+const PROGRAMMES = ['RH', 'GBV', 'Youth'];
+const COLORS = {RH:'#3571a4',GBV:'#e38a15',Youth:'#8e9ec5'};
+const LANG = {
+  en:{map:'Map',directory:'Directory',insights:'Insights',quality:'Data quality',loadData:'Load data',eyebrow:'SERVICE COVERAGE · SYRIA',
+    mapTitle:'Explore facilities across Syria',mapSubtitle:'A clearer view of service locations, programmes and partners.',
+    dirTitle:'Facility directory',dirSubtitle:'Find a record and open its details.',insightsTitle:'Coverage insights',insightsSubtitle:'An overview of programmes and locations.',
+    qualityTitle:'Data quality',qualitySubtitle:'Review records that may need location verification.', facilities:'Facilities',governorates:'Governorates',partners:'Partners',
+    dataPrompt:'Your map is ready. Add your private facility file to begin.',dataExplain:'Records stay in this browser tab. No sign-in, server upload or API.',chooseFile:'Choose JSON file',
+    filters:'Filters',moreFilters:'More filters',partner:'Implementing partner',facilityType:'Facility type',clearAll:'Clear all filters',
+    mapCoverage:'Map coverage',mapHint:'Select a marker to explore',fit:'Fit locations',mapLabel:'SYRIA · 4 GOVERNORATES',gestureTip:'Drag to move · Scroll to zoom',
+    programmes:'PROGRAMMES',rh:'Reproductive health',gbv:'GBV',youth:'Youth',localOnly:'Private data stays on your device',
+    openDirectory:'Browse facility directory',dirExplain:'Find a record and open its details.',export:'Export CSV',code:'Facility code',programme:'Programme',governorate:'Governorate',
+    noMatches:'No matching facilities.',insightExplain:'An overview of programmes and locations.',byGov:'Facilities by governorate',byProgram:'Programme mix',total:'TOTAL',byPartner:'Implementing partners',
+    qualityExplain:'Review records that may need location verification.',qualityNote:'Original coordinates are preserved. Map adjustments are flagged for verification.',
+    footerData:'No facility data included in website source',allRegions:'All areas',allPrograms:'All programmes',allPartners:'All partners',allTypes:'All facility types',
+    searchPlaceholder:'Find a facility, location or partner',searchDirectory:'Search records',noData:'Load your private JSON file to see facilities.',
+    loaded:'records loaded locally',local:'On-device data',matching:'facilities',locations:'locations',mapTap:'Tap a marker to explore',mobileGesture:'Use two fingers to move or pinch to zoom',
+    records:'records',record:'record',view:'View details',details:'Facility information',summary:'OVERVIEW',fullDetails:'Complete record',brochure:'Brochure information',source:'Source and verification',
+    copyCode:'Copy code',copyCoords:'Copy coordinates',locate:'Show on map',close:'Close details',choice:'Choose a facility',coLocated:'facilities at this location',
+    noFlags:'No flagged facilities.',invalidFile:'This JSON does not contain valid facility records.',tooLarge:'File is too large (20MB max).',loadError:'Could not load the file: ',
+    confirmExport:'The CSV will contain sensitive addresses and coordinates. Export only to an authorized device?',saved:'Copied',exportSuccess:'Private CSV exported',
+    regions:{Lattakia:'Lattakia',Tartous:'Tartous',Hama:'Hama',Homs:'Homs'},
+    fields:{implementing_partner:'Implementing partner',facility_code:'Facility code',main_program:'Main programme',facility_type:'Facility type',mode:'Mode of facility',governorate:'Governorate',district:'District',subdistrict:'Subdistrict',commune:'Commune / village / town',neighbourhood:'Neighbourhood',site_name:'Site name / detailed address',lat:'Latitude',lon:'Longitude',source_sheet:'Source worksheet',source_row:'Source row',lat_original:'Original latitude',lon_original:'Original longitude'}},
+  ar:{map:'الخريطة',directory:'الدليل',insights:'الإحصاءات',quality:'جودة البيانات',loadData:'تحميل البيانات',eyebrow:'تغطية الخدمات · سوريا',
+    mapTitle:'استكشف المنشآت في سوريا',mapSubtitle:'خريطة مبسّطة لمواقع الخدمات والبرامج والشركاء.',
+    dirTitle:'دليل المنشآت',dirSubtitle:'ابحث عن سجل واطّلع على تفاصيله.',insightsTitle:'تحليل التغطية',insightsSubtitle:'نظرة عامة على المواقع والبرامج.',
+    qualityTitle:'جودة البيانات',qualitySubtitle:'مراجعة السجلات التي قد تتطلب تدقيق المواقع.',facilities:'منشأة',governorates:'محافظات',partners:'شريك',
+    dataPrompt:'الخريطة جاهزة. حمّل ملف المنشآت الخاص للبدء.',dataExplain:'تبقى البيانات في علامة التبويب هذه، دون تسجيل دخول أو خادم أو API.',chooseFile:'اختيار ملف JSON',
+    filters:'المرشحات',moreFilters:'مرشحات إضافية',partner:'الشريك المنفذ',facilityType:'نوع المنشأة',clearAll:'مسح المرشحات',
+    mapCoverage:'التوزيع الجغرافي',mapHint:'اختر علامة لاستعراض الموقع',fit:'عرض المواقع',mapLabel:'سوريا · ٤ محافظات',gestureTip:'اسحب للتحريك · عجلة الفأرة للتكبير',
+    programmes:'البرامج',rh:'الصحة الإنجابية',gbv:'العنف القائم على النوع الاجتماعي',youth:'الشباب',localOnly:'البيانات الخاصة تبقى على جهازك',
+    openDirectory:'استعراض دليل المنشآت',dirExplain:'ابحث عن سجل واطّلع على تفاصيله.',export:'تصدير CSV',code:'رمز المنشأة',programme:'البرنامج',governorate:'المحافظة',
+    noMatches:'لا توجد منشآت مطابقة.',insightExplain:'نظرة عامة على المواقع والبرامج.',byGov:'المنشآت حسب المحافظة',byProgram:'توزيع البرامج',total:'الإجمالي',byPartner:'الشركاء المنفذون',
+    qualityExplain:'مراجعة السجلات التي قد تتطلب تدقيق المواقع.',qualityNote:'تم الاحتفاظ بالإحداثيات الأصلية، وتحديد تعديلات العرض التي تحتاج إلى تحقق.',
+    footerData:'لا توجد بيانات منشآت ضمن ملفات الموقع',allRegions:'كل المناطق',allPrograms:'كل البرامج',allPartners:'كل الشركاء',allTypes:'كل أنواع المنشآت',
+    searchPlaceholder:'ابحث عن منشأة أو موقع أو شريك',searchDirectory:'البحث في السجلات',noData:'حمّل ملف JSON الخاص لعرض المنشآت.',
+    loaded:'سجلاً تم تحميله محلياً',local:'البيانات على الجهاز',matching:'منشأة',locations:'موقع',mapTap:'المس علامة لاستعراض الموقع',mobileGesture:'استخدم إصبعين لتحريك الخريطة أو تكبيرها',
+    records:'سجلاً',record:'سجل',view:'عرض التفاصيل',details:'معلومات المنشأة',summary:'نظرة عامة',fullDetails:'السجل الكامل',brochure:'معلومات الكتيّب',source:'المصدر والتحقق',
+    copyCode:'نسخ الرمز',copyCoords:'نسخ الإحداثيات',locate:'عرض على الخريطة',close:'إغلاق',choice:'اختر منشأة',coLocated:'منشآت في هذا الموقع',
+    noFlags:'لا توجد سجلات معلّمة.',invalidFile:'لا يحتوي ملف JSON على سجلات منشآت صالحة.',tooLarge:'حجم الملف أكبر من 20 ميغابايت.',loadError:'تعذر تحميل الملف: ',
+    confirmExport:'سيتضمن ملف CSV عناوين وإحداثيات حساسة. هل تريد تصديره إلى جهاز مخوّل؟',saved:'تم النسخ',exportSuccess:'تم تصدير CSV الخاص',
+    regions:{Lattakia:'اللاذقية',Tartous:'طرطوس',Hama:'حماة',Homs:'حمص'},
+    fields:{implementing_partner:'الشريك المنفذ',facility_code:'رمز المنشأة',main_program:'البرنامج الرئيسي',facility_type:'نوع المنشأة',mode:'وضع المنشأة',governorate:'المحافظة',district:'المنطقة',subdistrict:'الناحية',commune:'البلدة / القرية / المدينة',neighbourhood:'الحي',site_name:'اسم الموقع والعنوان التفصيلي',lat:'خط العرض',lon:'خط الطول',source_sheet:'ورقة المصدر',source_row:'رقم الصف',lat_original:'خط العرض الأصلي',lon_original:'خط الطول الأصلي'}}
 };
-$('languageBtn').addEventListener('click',()=>{state.lang=state.lang==='en'?'ar':'en';applyLanguage()});
-function applyLanguage(){
-  document.documentElement.lang=state.lang;document.body.dir=state.lang==='ar'?'rtl':'ltr';
-  $('languageBtn').textContent=state.lang==='ar'?'English / EN':'عربي / EN';
-  const name=({map:'Map Explorer',directory:'Facility Directory',insights:'Statistics & Insights',quality:'Data Quality'})[state.view];
-  $('breadCurrent').textContent=state.lang==='ar'?AR[name]:name;
-  const page=({map:'Syria Facilities Explorer',directory:'Facilities Directory',insights:'Coverage & Insights',quality:'Data Quality Review'})[state.view];
-  $('pageTitle').innerHTML=escapeHTML(state.lang==='ar'?AR[page]:page)+' <span class="heading-star">✳</span>';
-  $all('.nav-link').forEach(b=>{const text=b.dataset.view===state.view?name:({map:'Map Explorer',directory:'Facility Directory',insights:'Statistics & Insights',quality:'Data Quality'})[b.dataset.view];const textnode=Array.from(b.childNodes).find(n=>n.nodeType===3&&n.textContent.trim());if(textnode)textnode.textContent=' '+(state.lang==='ar'?AR[text]:text)+' ';});
-  $all('.region-link').forEach(b=>{const textnode=Array.from(b.childNodes).find(n=>n.nodeType===3&&n.textContent.trim());if(textnode)textnode.textContent=state.lang==='ar'?AR[b.dataset.region]:b.dataset.region;});
-  $('mapSearch').placeholder=state.lang==='ar'?'الاسم، الرمز، الشريك...':'Name, code, partner...';
-  translateInterface();
-}
-
-
-const translations=[
-  ['.page-heading .eyebrow','HUMANITARIAN SERVICE COVERAGE','التغطية الجغرافية للخدمات الإنسانية'],
-  ['.nav-label','WORKSPACE','مساحة العمل'],['.regions-title','COVERAGE REGIONS','المحافظات المستهدفة'],
-  ['.metric:nth-child(1) .metric-label','TOTAL FACILITIES','إجمالي المنشآت'],
-  ['.metric:nth-child(2) .metric-label','IMPLEMENTING PARTNERS','الشركاء المنفذون'],
-  ['.metric:nth-child(3) .metric-label','REPRODUCTIVE HEALTH','الصحة الإنجابية'],
-  ['.metric:nth-child(4) .metric-label','PROTECTION & YOUTH','الحماية والشباب'],
-  ['.filter-head small','EXPLORE FACILITIES','استكشاف المنشآت'],['.filter-head h3','Find a location','ابحث عن موقع'],
-  ['.filter-label[for="mapSearch"]','SEARCH FACILITIES','ابحث في المنشآت'],
-  ['.filter-label[for="governorateFilter"]','GOVERNORATE','المحافظة'],
-  ['.filter-label[for="programFilter"]','MAIN PROGRAMME','البرنامج الرئيسي'],
-  ['.filter-label[for="partnerFilter"]','IMPLEMENTING PARTNER','الشريك المنفذ'],
-  ['.filter-label[for="typeFilter"]','FACILITY TYPE','نوع المنشأة'],
-  ['#resetFilters','↻ Reset all filters','↻ مسح كل المرشحات'],
-  ['.filter-foot-count>span','matching facilities','منشآت مطابقة'],
-  ['.map-top h2','Geographic distribution','التوزيع الجغرافي'],
-  ['.map-top p','Drag to pan · Scroll to zoom · Select a marker','اسحب للتحريك · مرّر للتكبير · اختر علامة'],
-  ['#fitMapBtn','⌾ Fit facilities','⌾ عرض المنشآت'],
-  ['#syriaMapBtn','▣ Full Syria','▣ سوريا كاملة'],
-  ['.map-overlay-label','SYRIA • LIVE MAP EXPLORER','سوريا • مستكشف الخريطة التفاعلية'],
-  ['.map-legend>span','PROGRAMME TYPE','نوع البرنامج'],
-  ['.map-legend>div:nth-child(2)','Reproductive health','الصحة الإنجابية'],
-  ['.map-legend>div:nth-child(3)','GBV / protection','العنف القائم على النوع الاجتماعي'],
-  ['.map-legend>div:nth-child(4)','Youth','الشباب'],
-  ['#directoryPanel .section-title-row h2','Facility directory','دليل المنشآت'],
-  ['#directoryPanel .section-title-row p','Search and inspect facility records loaded into this browser tab.','ابحث واستعرض سجلات المنشآت المحملة محلياً في المتصفح.'],
-  ['#insightsPanel .section-title-row h2','Coverage intelligence','تحليلات التغطية'],
-  ['#insightsPanel .section-title-row p','Aggregated distribution across all four governorates.','التوزيع الإجمالي عبر المحافظات الأربع.'],
-  ['#qualityPanel .section-title-row h2','Data quality review','مراجعة جودة البيانات'],
-  ['#qualityPanel .section-title-row p','Normalization notes from the original Excel records. Please verify locations before operational use.','ملاحظات تنسيق ملف إكسل الأصلي. يرجى تدقيق المواقع قبل الاستخدام الميداني.'],
-  ['#downloadBtn span','Export CSV','تصدير CSV'],
-  ['.sidebar-card b','Local data session','جلسة بيانات محلية'],
-  ['.sidebar-card p','Open the private JSON file from your computer to display full facility records. Data stays in this browser tab.','حمّل ملف البيانات الخاص من جهازك لعرض المنشآت. تبقى البيانات داخل علامة التبويب هذه.'],
-  ['.sidebar-card .green-lock','NO DATA IN GITHUB','لا توجد بيانات خاصة في GitHub'],
-  ['.live-status','ON-DEVICE DATA','بيانات على الجهاز']
-];
-function translateInterface(){
-  const ar=state.lang==='ar';
-  for(const [selector,en,arabic] of translations){
-    const el=document.querySelector(selector);if(!el)continue;
-    if(el.children.length){const t=Array.from(el.childNodes).find(n=>n.nodeType===3&&n.textContent.trim());if(t)t.textContent=' '+(ar?arabic:en)+' '}
-    else el.textContent=ar?arabic:en;
-  }
-  for(const [id,en,arText] of [
-    ['governorateFilter','All governorates','كل المحافظات'],
-    ['programFilter','All programmes','كل البرامج'],
-    ['partnerFilter','All partners','كل الشركاء'],
-    ['typeFilter','All facility types','كل أنواع المنشآت'],
-    ['directoryGov','All governorates','كل المحافظات'],
-    ['directoryProgram','All programmes','كل البرامج']]){
-    const o=$(id)?.querySelector('option[value=""]');if(o)o.textContent=ar?arText:en;
-  }
-  $('directorySearch').placeholder=ar?'بحث بالرمز أو الاسم أو المنطقة أو الشريك...':'Search by name, code, district, partner or brochure...';
-  $('todayDate').textContent=new Intl.DateTimeFormat(ar?'ar-SY':'en-GB',{day:'numeric',month:'short',year:'numeric'}).format(new Date());
-  const metric=document.querySelector('.metric:nth-child(1) .metric-label');
-  if(metric){const node=Array.from(metric.childNodes).find(n=>n.nodeType===3&&n.textContent.trim());if(node)node.textContent=' '+(ar?'إجمالي المنشآت':'TOTAL FACILITIES')+' ';}
-  $('filterRoleNotice').textContent=ar?'البيانات المحملة تبقى في صفحة المتصفح فقط.':'Data loaded only in this browser tab.';
-}
-
-try{initializeDashboard()}catch(err){console.error(err);alert('Unable to load map: '+err.message)}
+const state = {lang:'en',view:'map',records:[],filtered:[],program:'',gov:'',partners:[],geo:null,mapReady:false,viewBox:{x:0,y:0,w:1200,h:760},animation:null,markers:[],pointer:null,touches:null,selected:null,filterOpen:false};
+const t=key=>LANG[state.lang][key] ?? key;
+const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const V=v=>v===undefined||v===null||v===''?'—':String(v);
+const finite=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v))?Number(v):null;
+const programName=p=>p==='RH'?t('rh'):p==='GBV'?t('gbv'):p==='Youth'?t('youth'):p;
+const progClass=p=>p==='GBV'?'gbv':p==='Youth'?'youth':'';
+const svgEl=(name,attrs={},parent)=>{let e=document.createElementNS(SVG_NS,name);for(const [key,val] of Object.entries(attrs))e.setAttribute(key,String(val));if(parent)parent.append(e);return e};
+function showToast(message){let e=$('toast');e.textContent=message;e.hidden=false;clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>e.hidden=true,2800)}
+function getSummary(records){const gov=Object.fromEntries(GOVS.map(g=>[g,0])),prog={RH:0,GBV:0,Youth:0},partners={};for(const r of records){gov[r.governorate_en]=(gov[r.governorate_en]||0)+1;prog[r.main_program]=(prog[r.main_program]||0)+1;partners[r.implementing_partner||'Unspecified']=(partners[r.implementing_partner||'Unspecified']||0)+1}return{gov,prog,partners,total:records.length}}
+function searchMatches(r,q){return [r.facility_code,r.site_name,r.commune,r.district,r.subdistrict,r.governorate,r.governorate_en,r.implementing_partner,r.facility_type,r.brochure].join(' ').toLocaleLowerCase().includes(q.toLocaleLowerCase())}
+function renderRegionPills(){const items=['',...GOVS];$('regionPills').innerHTML=items.map(g=>`<button type="button" class="region-pill ${state.gov===g?'is-active':''}" data-gov="${esc(g)}" aria-pressed="${state.gov===g}">${g?esc(t('regions')[g]):esc(t('allRegions'))}<span>${g?state.records.filter(r=>r.governorate_en===g).length:state.records.length}</span></button>`).join('');$$('[data-gov]').forEach(b=>b.addEventListener('click',()=>{state.gov=b.dataset.gov;renderRegionPills();filterData();if(state.gov)fitRecords(state.filtered);else fitRecords(state.filtered)}))}
+function renderProgrammePills(){const items=['',...PROGRAMMES];$('programmePills').innerHTML=items.map(p=>`<button type="button" class="programme-pill ${state.program===p?'is-active':''}" aria-pressed="${state.program===p}" data-program="${esc(p)}"><i class="mini-dot ${p?p.toLowerCase():'all'}"></i>${esc(p?programName(p):t('allPrograms'))}</button>`).join('');$$('[data-program]').forEach(b=>b.addEventListener('click',()=>{state.program=b.dataset.program;renderProgrammePills();filterData()}))}
+function fillSelect(id,items,title){const e=$(id);const val=e.value;e.textContent='';const op=document.createElement('option');op.value='';op.textContent=title;e.append(op);for(const label of items){const el=document.createElement('option');el.value=label;el.textContent=label;e.append(el)}e.value=items.includes(val)?val:''}
+function updateSelectors(){fillSelect('partnerFilter',[...new Set(state.records.map(r=>r.implementing_partner).filter(Boolean))].sort(),t('allPartners'));fillSelect('typeFilter',[...new Set(state.records.map(r=>r.facility_type).filter(Boolean))].sort(),t('allTypes'));fillSelect('directoryGov',GOVS,t('allRegions'));fillSelect('directoryProgram',PROGRAMMES,t('allPrograms'))}
+function filterData(){const q=$('mapSearch').value.trim();const partner=$('partnerFilter').value,facilityType=$('typeFilter').value;state.filtered=state.records.filter(r=>(!state.gov||r.governorate_en===state.gov)&&(!state.program||r.main_program===state.program)&&(!q||searchMatches(r,q))&&(!partner||r.implementing_partner===partner)&&(!facilityType||r.facility_type===facilityType));const total=state.filtered.length;const places=new Set(state.filtered.filter(r=>r.lat!==null&&r.lon!==null).map(r=>`${r.lat.toFixed(6)}|${r.lon.toFixed(6)}`)).size;$('matchCount').textContent=`${total} ${t('matching')} · ${places} ${t('locations')}`;$('statFacilities').textContent=state.records.length;$('statGov').textContent=new Set(state.records.map(r=>r.governorate_en)).size;$('statPartners').textContent=new Set(state.records.map(r=>r.implementing_partner)).size;$('mapResultNote').textContent=state.records.length?`${total} ${t('matching')} · ${places} ${t('locations')}`:t('noData');let cnt=Number(!!state.program)+Number(!!state.gov)+Number(!!partner)+Number(!!facilityType)+Number(!!q);$('activeFilterCount').hidden=!cnt;$('activeFilterCount').textContent=cnt;hideTooltip();renderMarkers()}
+function importRecords(input){if(!Array.isArray(input)||input.length>20000||!input.every(r=>r&&typeof r==='object'&&typeof r.facility_code==='string'&&typeof r.main_program==='string'&&typeof r.governorate_en==='string'))throw Error(t('invalidFile'));const records=input.map((r,i)=>({...r,id:String(r.id||r.facility_code||i),lat:finite(r.lat),lon:finite(r.lon),quality_flags:Array.isArray(r.quality_flags)?r.quality_flags:[]}));const ids=new Set(records.map(r=>r.id));if(ids.size!==records.length)throw Error('Facility IDs are not unique.');state.records=records;state.gov='';state.program='';$('mapSearch').value='';$('partnerFilter').value='';$('typeFilter').value='';$('directorySearch').value='';$('directoryGov').value='';$('directoryProgram').value='';$('importCallout').hidden=true;updateSelectors();renderRegionPills();renderProgrammePills();filterData();renderDirectory();renderInsights();renderQuality();closeDetails();setView('map');requestAnimationFrame(()=>fitRecords(state.filtered));showToast(`${records.length} ${t('loaded')}`)}
+function setView(v){if(!['map','directory','insights','quality'].includes(v))return;state.view=v;$$('[data-panel]').forEach(e=>e.classList.toggle('is-active',e.dataset.panel===v));$$('[data-view]').forEach(e=>e.classList.toggle('is-active',e.dataset.view===v));const name={map:'mapTitle',directory:'dirTitle',insights:'insightsTitle',quality:'qualityTitle'}[v];const sub={map:'mapSubtitle',directory:'dirSubtitle',insights:'insightsSubtitle',quality:'qualitySubtitle'}[v];$('pageTitle').innerHTML=esc(t(name))+'<span class="heading-period">.</span>';$('pageSubtitle').textContent=t(sub);hideTooltip();if(v==='map')requestAnimationFrame(()=>{updateAspect();renderMarkers()});window.scrollTo({top:0,behavior:'auto'})}
+function changeLanguage(){state.lang=state.lang==='en'?'ar':'en';document.documentElement.lang=state.lang;document.body.dir=state.lang==='ar'?'rtl':'ltr';$('languageLabel').textContent=state.lang==='en'?'عربي':'EN';$$('[data-i18n]').forEach(el=>{el.textContent=t(el.dataset.i18n)});$('mapSearch').placeholder=t('searchPlaceholder');$('directorySearch').placeholder=t('searchDirectory');$('gestureTip').textContent=window.innerWidth<700?t('mobileGesture'):t('gestureTip');$('detailSheet').setAttribute('aria-label',t('details'));geography();updateSelectors();renderRegionPills();renderProgrammePills();filterData();renderDirectory();renderInsights();renderQuality();setView(state.view);if(state.selected){if(state.selected.group)openGroup(state.selected.group);else openFacility(state.selected.id)}}
+function renderDirectory(){const q=$('directorySearch').value.trim(),gov=$('directoryGov').value,program=$('directoryProgram').value;const recs=state.records.filter(r=>(!gov||r.governorate_en===gov)&&(!program||r.main_program===program)&&(!q||searchMatches(r,q))).sort((a,b)=>a.governorate_en.localeCompare(b.governorate_en)||a.facility_code.localeCompare(b.facility_code));$('directoryCount').textContent=`${recs.length} ${t('records')}`;$('directoryEmpty').hidden=!!recs.length;$('directoryBody').innerHTML=recs.map(r=>`<tr><td><span class="code-primary">${esc(r.facility_code)}</span><small class="record-sub">${esc(r.site_name||r.commune||'—')}</small></td><td><span class="program-tag ${progClass(r.main_program)}">${esc(programName(r.main_program))}</span></td><td>${esc(t('regions')[r.governorate_en]||r.governorate_en)}</td><td>${esc(r.implementing_partner)}</td><td><button class="record-open" data-record="${esc(r.id)}">${esc(t('view'))} →</button></td></tr>`).join('');$$('[data-record]').forEach(b=>b.addEventListener('click',()=>openFacility(b.dataset.record)))}
+function renderInsights(){const s=getSummary(state.records),max=Math.max(1,...Object.values(s.gov));$('insightGovernorates').innerHTML=GOVS.map(g=>`<div class="bar-row"><div class="bar-top"><span>${esc(t('regions')[g])}</span><b>${s.gov[g]}</b></div><div class="bar-track"><div class="bar-fill" style="width:${s.gov[g]/max*100}%"></div></div></div>`).join('');const total=s.total;let accum=0;const parts=PROGRAMMES.map(p=>{const a=accum;accum+=total?s.prog[p]/total*100:0;return `${COLORS[p]} ${a}% ${accum}%`});$('programDonut').style.background=total?`conic-gradient(${parts.join(',')})`:'#e6eef5';$('insightTotal').textContent=s.total;$('donutLegend').innerHTML=PROGRAMMES.map(p=>`<div class="donut-key"><i class="legend-dot ${p.toLowerCase()}"></i><span>${esc(programName(p))}</span><b>${s.prog[p]}</b></div>`).join('');$('insightPartners').innerHTML=Object.entries(s.partners).sort((a,b)=>b[1]-a[1]).map(([partner,n])=>`<div class="partner-row"><span>${esc(partner)}</span><b>${n}</b></div>`).join('')}
+function renderQuality(){const r=state.records.filter(r=>r.quality_flags.length);$('qualityList').innerHTML=r.length?r.map(x=>`<article class="quality-row"><div><strong>${esc(x.facility_code)}</strong><p>${esc(t('regions')[x.governorate_en])} · ${esc(x.implementing_partner)}</p>${x.quality_flags.map(f=>`<span class="quality-flag">${esc(f)}</span>`).join('')}</div><button class="record-open" data-quality="${esc(x.id)}">${esc(t('view'))} →</button></article>`).join(''):`<div class="empty-state">${esc(t('noFlags'))}</div>`;$$('[data-quality]').forEach(b=>b.addEventListener('click',()=>openFacility(b.dataset.quality)))}
+function field(key,v,wide=false){return `<div class="detail-field ${wide?'wide':''}"><label>${esc(t('fields')[key]||key)}</label><div dir="auto">${esc(V(v))}</div></div>`}
+function closeDetails(){$('drawerBackdrop').hidden=true;$('detailSheet').hidden=true;state.selected=null;document.body.style.overflow=''}
+function showDetails(html){const sheet=$('detailSheet');$('detailBody').innerHTML=html;sheet.hidden=false;$('drawerBackdrop').hidden=false;document.body.style.overflow='hidden';sheet.scrollTop=0;sheet.querySelector('[data-close]').addEventListener('click',closeDetails);sheet.querySelector('[data-copy-code]')?.addEventListener('click',()=>copyText(sheet.querySelector('[data-copy-code]').dataset.copyCode));sheet.querySelector('[data-copy-coords]')?.addEventListener('click',()=>copyText(sheet.querySelector('[data-copy-coords]').dataset.copyCoords));sheet.querySelector('[data-locate]')?.addEventListener('click',()=>{const id=sheet.querySelector('[data-locate]').dataset.locate;const r=state.records.find(x=>x.id===id);if(!r)return;closeDetails();state.gov='';state.program='';$('mapSearch').value='';$('partnerFilter').value='';$('typeFilter').value='';renderRegionPills();renderProgrammePills();filterData();setView('map');flyToPoint(r.lat,r.lon,115)});setTimeout(()=>sheet.querySelector('[data-close]')?.focus({preventScroll:true}),50)}
+function openFacility(id){const r=state.records.find(r=>r.id===id);if(!r)return;state.selected=r;const coords=r.lat!==null&&r.lon!==null?`${r.lat.toFixed(6)}, ${r.lon.toFixed(6)}`:'—';showDetails(`<div class="detail-head"><span class="detail-overline">${esc(t('details'))}</span><button data-close class="detail-close" type="button" aria-label="${esc(t('close'))}">×</button><h2 id="detailTitle">${esc(r.facility_code)}</h2><p dir="auto">${esc(t('regions')[r.governorate_en])} · ${esc(r.district||r.commune||'')}</p><div class="detail-tags"><span class="detail-tag">${esc(programName(r.main_program))}</span><span class="detail-tag">${esc(r.facility_type)}</span></div></div><div class="detail-content"><div class="detail-actions"><button class="small-action" data-copy-code="${esc(r.facility_code)}">${esc(t('copyCode'))}</button><button class="small-action" data-copy-coords="${esc(coords)}">${esc(t('copyCoords'))}</button><button class="small-action" data-locate="${esc(r.id)}">${esc(t('locate'))}</button></div><div class="detail-section">${esc(t('summary'))}</div><div class="detail-grid">${field('implementing_partner',r.implementing_partner,true)}${field('site_name',r.site_name||r.commune,true)}${field('mode',r.mode)}${field('governorate',r.governorate)}</div><details class="details-accordion"><summary>${esc(t('fullDetails'))}</summary><div class="accordion-inner"><div class="detail-grid">${['facility_code','main_program','facility_type','district','subdistrict','commune','neighbourhood','lat','lon'].map(k=>field(k,r[k],['commune','neighbourhood'].includes(k))).join('')}</div></div></details><details class="details-accordion"><summary>${esc(t('brochure'))}</summary><div class="accordion-inner brochure-text" dir="auto">${esc(V(r.brochure))}</div></details><details class="details-accordion"><summary>${esc(t('source'))}</summary><div class="accordion-inner"><div class="detail-grid">${['source_sheet','source_row','lat_original','lon_original'].map(k=>field(k,r[k])).join('')}</div>${r.quality_flags?.length?`<div class="notice" style="margin-top:12px">${r.quality_flags.map(esc).join('<br>')}</div>`:''}</div></details></div>`)}
+function openGroup(group){state.selected={group};showDetails(`<div class="detail-head"><span class="detail-overline">${esc(t('choice'))}</span><button data-close class="detail-close" type="button" aria-label="${esc(t('close'))}">×</button><h2 id="detailTitle">${group.length} ${esc(t('coLocated'))}</h2><p>${esc(t('choice'))}</p></div><div class="detail-content">${group.map(r=>`<button class="group-choice" data-select="${esc(r.id)}"><strong>${esc(r.facility_code)}</strong><small>${esc(programName(r.main_program))} · ${esc(r.implementing_partner)}</small></button>`).join('')}</div>`);$$('[data-select]').forEach(btn=>btn.addEventListener('click',()=>openFacility(btn.dataset.select)))}
+async function copyText(text){try{await navigator.clipboard.writeText(text);showToast(t('saved'))}catch{showToast(text)}}
+function exportCsv(){if(!state.records.length)return;if(!window.confirm(t('confirmExport')))return;const keys=['implementing_partner','facility_code','main_program','facility_type','mode','governorate','district','subdistrict','commune','neighbourhood','site_name','lat','lon','brochure'];const csv=[keys,...state.records.map(r=>keys.map(k=>r[k]??''))].map(row=>row.map(v=>`"${String(v).replace(/^[=+@-]/,"'$&").replace(/"/g,'""')}"`).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob(['\ufeff',csv],{type:'text/csv;charset=utf-8'}));let link=document.createElement('a');link.href=url;link.download='facilities-private.csv';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);showToast(t('exportSuccess'))}
+// Map: offline vector geometry, fixed-size interactive clusters, intelligent tooltip,
+// wheel-centered zoom on desktop, pointer drag, double click, two-finger touch pinch/pan.
+function project(lat,lon){let g=state.geo;return{x:g.xOffset+(lon-g.lonMin)*g.scale*.81,y:g.yOffset+(g.latMax-lat)*g.scale}}
+function mapSize(){const el=$('mapSvg');return{width:Math.max(1,el.clientWidth),height:Math.max(1,el.clientHeight)}}
+function applyView(){let v=state.viewBox;$('mapSvg').setAttribute('viewBox',`${v.x} ${v.y} ${v.w} ${v.h}`)}
+function updateAspect(){const {width,height}=mapSize();let v=state.viewBox;const center=v.y+v.h/2;v.h=v.w*height/width;v.y=center-v.h/2;applyView()}
+function clampView(v){const width=Math.max(65,Math.min(1350,v.w));const height=width*mapSize().height/mapSize().width;return{x:Math.max(-450,Math.min(1550-width,v.x)),y:Math.max(-490,Math.min(1330-height,v.y)),w:width,h:height}}
+function setViewBox(v){state.viewBox=clampView(v);applyView();renderMarkers()}
+function cancelFly(){if(state.animation)cancelAnimationFrame(state.animation);state.animation=null}
+function flyTo(v,duration=390){cancelFly();hideTooltip();const goal=clampView(v);if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){setViewBox(goal);return}const from={...state.viewBox},start=performance.now();const tick=now=>{let p=Math.min(1,(now-start)/duration),e=1-(1-p)**3;const next={};for(let key of ['x','y','w','h'])next[key]=from[key]+(goal[key]-from[key])*e;state.viewBox=next;applyView();renderMarkers();if(p<1)state.animation=requestAnimationFrame(tick);else{state.animation=null;setViewBox(goal)}};state.animation=requestAnimationFrame(tick)}
+function flyToPoint(lat,lon,width=125){if(!Number.isFinite(lat)||!Number.isFinite(lon))return;let p=project(lat,lon),ratio=mapSize().height/mapSize().width;flyTo({x:p.x-width/2,y:p.y-width*ratio/2,w:width})}
+function fitRecords(records){const pts=records.filter(r=>r.lat!==null&&r.lon!==null).map(r=>project(r.lat,r.lon));if(!pts.length){fullMap();return}let minX=Math.min(...pts.map(p=>p.x)),maxX=Math.max(...pts.map(p=>p.x)),minY=Math.min(...pts.map(p=>p.y)),maxY=Math.max(...pts.map(p=>p.y));const aspect=mapSize().height/mapSize().width;let w=Math.min(900,Math.max(140,(maxX-minX)*1.58,(maxY-minY)*1.55/aspect));flyTo({x:(minX+maxX)/2-w/2,y:(minY+maxY)/2-w*aspect/2,w})}
+function fullMap(){flyTo({x:0,y:0,w:1200})}
+function zoomAt(factor,clientX,clientY,animate=false){const rect=$('mapSvg').getBoundingClientRect(),old=state.viewBox;let ax=clientX===undefined?.5:Math.max(0,Math.min(1,(clientX-rect.left)/rect.width)),ay=clientY===undefined?.5:Math.max(0,Math.min(1,(clientY-rect.top)/rect.height));let newW=Math.max(65,Math.min(1350,old.w*factor)),newH=newW*rect.height/rect.width;const target={x:old.x+old.w*ax-newW*ax,y:old.y+old.h*ay-newH*ay,w:newW,h:newH};if(animate)flyTo(target,220);else{cancelFly();hideTooltip();setViewBox(target)}}
+function geography(){const root=$('landWorld');root.textContent='';const shapes=[...state.geo.land.filter(x=>!x.is_syria),...state.geo.land.filter(x=>x.is_syria)];for(const item of shapes){const e=svgEl('path',{d:item.path,class:item.is_syria?'land-syria':'land-neighbor'},root);e.append(svgEl('title',{},null));e.lastChild.textContent=item.name}const labels=$('mapCities');labels.textContent='';const names={Lattakia:'Lattakia',Tartous:'Tartous',Hama:'Hama',Homs:'Homs'};for(const c of state.geo.cities.filter(c=>Object.hasOwn(names,c.name))){svgEl('circle',{cx:c.x,cy:c.y,r:3,class:'city-dot'},labels);const label=svgEl('text',{x:c.x+11,y:c.y-9,class:'city-label'},labels);label.textContent=t('regions')[c.name]||c.name}}
+function markerGroups(){let recs=state.filtered.filter(r=>r.lat!==null&&r.lon!==null);const {width,height}=mapSize(),v=state.viewBox;const r=window.innerWidth<600?42:35;const groups=[];for(const item of recs){let p=project(item.lat,item.lon),group=groups.find(g=>Math.hypot((g.x-p.x)*width/v.w,(g.y-p.y)*height/v.h)<r);if(group){const n=group.records.length;group.x=(group.x*n+p.x)/(n+1);group.y=(group.y*n+p.y)/(n+1);group.records.push(item)}else groups.push({x:p.x,y:p.y,records:[item]})}return groups}
+function tooltipAt(group){if(window.matchMedia('(hover: none)').matches)return;const el=$('mapTooltip');const v=state.viewBox,{width,height}=mapSize();const left=(group.x-v.x)/v.w*width,top=(group.y-v.y)/v.h*height;if(left<0||left>width||top<0||top>height)return;const one=group.records[0];el.innerHTML=group.records.length>1?`<b>${group.records.length} ${esc(t('matching'))}</b><small>${esc(t('choice'))} · ${esc(t('regions')[one.governorate_en])}</small>`:`<b>${esc(one.facility_code)}</b><small>${esc(programName(one.main_program))} · ${esc(t('regions')[one.governorate_en])}</small>`;el.style.left=`${Math.min(width-95,Math.max(95,left))}px`;el.style.top=`${Math.max(67,top)}px`;el.hidden=false}
+function hideTooltip(){$('mapTooltip').hidden=true}
+function activateGroup(group){hideTooltip();if(group.records.length===1){openFacility(group.records[0].id);return}const unique=new Set(group.records.map(r=>`${r.lat}|${r.lon}`));if(unique.size>1&&state.viewBox.w>110){let w=Math.max(75,state.viewBox.w*.58),ratio=mapSize().height/mapSize().width;flyTo({x:group.x-w/2,y:group.y-w*ratio/2,w});return}openGroup(group.records)}
+function renderMarkers(){if(!state.mapReady)return;const root=$('mapMarkers');root.textContent='';const groups=markerGroups();state.markers=groups;const u=state.viewBox.w/mapSize().width;for(const group of groups){const size=group.records.length>1?17:12;const color=group.records.length>1?'#23577f':COLORS[group.records[0].main_program]||'#3571a4';const node=svgEl('g',{transform:`translate(${group.x},${group.y})`,class:'marker-node',role:'button',tabindex:0,'aria-label':group.records.length>1?`${group.records.length} facilities`:group.records[0].facility_code},root);svgEl('circle',{r:27*u,fill:'transparent'},node);svgEl('circle',{r:(size+8)*u,class:'marker-shadow'},node);svgEl('circle',{r:(size+3)*u,class:'marker-ring'},node);svgEl('circle',{r:size*u,fill:color,class:'marker-core','stroke-width':2.2*u},node);if(group.records.length>1){const label=svgEl('text',{x:0,y:1*u,'font-size':12*u,class:'marker-count'},node);label.textContent=group.records.length}else svgEl('circle',{r:3*u,class:'marker-dot'},node);node.addEventListener('pointerdown',event=>event.stopPropagation());node.addEventListener('pointerenter',()=>tooltipAt(group));node.addEventListener('pointerleave',hideTooltip);node.addEventListener('focus',()=>tooltipAt(group));node.addEventListener('blur',hideTooltip);node.addEventListener('click',e=>{e.stopPropagation();activateGroup(group)});node.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();activateGroup(group)}})}}
+function initMap(){state.geo=window.SYRIA_GEOGRAPHY;if(!state.geo)throw Error('Offline map geometry missing');geography();state.mapReady=true;updateAspect();fullMap();$('zoomInBtn').addEventListener('click',()=>zoomAt(.70,undefined,undefined,true));$('zoomOutBtn').addEventListener('click',()=>zoomAt(1.4,undefined,undefined,true));$('fullMapBtn').addEventListener('click',()=>state.records.length?fitRecords(state.filtered):fullMap());$('fitMapBtn').addEventListener('click',()=>state.records.length?fitRecords(state.filtered):fullMap());const svg=$('mapSvg');svg.addEventListener('wheel',e=>{if(window.matchMedia('(pointer: coarse)').matches)return;e.preventDefault();const mag=Math.max(.72,Math.min(1.35,Math.exp(e.deltaY*.0009)));zoomAt(mag,e.clientX,e.clientY)},{passive:false});svg.addEventListener('dblclick',e=>{e.preventDefault();zoomAt(.62,e.clientX,e.clientY,true)});
+  svg.addEventListener('pointerdown',e=>{if(e.pointerType==='touch'||e.button!==0)return;cancelFly();hideTooltip();state.pointer={x:e.clientX,y:e.clientY,start:{...state.viewBox},id:e.pointerId};svg.setPointerCapture(e.pointerId);svg.classList.add('is-grabbing')});svg.addEventListener('pointermove',e=>{const g=state.pointer;if(!g||g.id!==e.pointerId)return;let rect=svg.getBoundingClientRect();state.viewBox=clampView({x:g.start.x-(e.clientX-g.x)*g.start.w/rect.width,y:g.start.y-(e.clientY-g.y)*g.start.h/rect.height,w:g.start.w});applyView();renderMarkers()});const pointerUp=()=>{state.pointer=null;svg.classList.remove('is-grabbing')};svg.addEventListener('pointerup',pointerUp);svg.addEventListener('pointercancel',pointerUp);
+  // Touch: one-finger vertical page scroll remains possible. Two fingers pan and zoom.
+  svg.addEventListener('touchstart',e=>{if(e.touches.length!==2){state.touches=null;return}const a=e.touches[0],b=e.touches[1];const center={x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2};state.touches={distance:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),center,start:{...state.viewBox}}},{passive:true});
+  svg.addEventListener('touchmove',e=>{if(e.touches.length!==2||!state.touches)return;e.preventDefault();cancelFly();hideTooltip();const a=e.touches[0],b=e.touches[1],g=state.touches;const dist=Math.max(10,Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)),rect=svg.getBoundingClientRect(),center={x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2};const ax=(g.center.x-rect.left)/rect.width,ay=(g.center.y-rect.top)/rect.height;const newW=Math.max(65,Math.min(1350,g.start.w*g.distance/dist)),newH=newW*rect.height/rect.width;setViewBox({x:g.start.x+ax*g.start.w-newW*(center.x-rect.left)/rect.width,y:g.start.y+ay*g.start.h-newH*(center.y-rect.top)/rect.height,w:newW})},{passive:false});svg.addEventListener('touchend',()=>state.touches=null,{passive:true});svg.addEventListener('touchcancel',()=>state.touches=null,{passive:true});
+  window.addEventListener('resize',()=>{if(!state.mapReady)return;updateAspect();renderMarkers();$('gestureTip').textContent=window.innerWidth<700?t('mobileGesture'):t('gestureTip')})}
+function init(){initMap();$$('[data-view]').forEach(b=>b.addEventListener('click',()=>setView(b.dataset.view)));$('brandLink').addEventListener('click',e=>{e.preventDefault();setView('map')});$('toDirectoryBtn').addEventListener('click',()=>setView('directory'));$('languageBtn').addEventListener('click',changeLanguage);const fileInput=$('dataFile');$('importBtn').addEventListener('click',()=>fileInput.click());$('calloutImportBtn').addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',async e=>{const f=e.target.files?.[0];if(!f)return;try{if(f.size>20*1024*1024)throw Error(t('tooLarge'));importRecords(JSON.parse(await f.text()))}catch(err){console.error(err);showToast(t('loadError')+err.message)}finally{fileInput.value=''}});$('mapSearch').addEventListener('input',filterData);$('partnerFilter').addEventListener('change',filterData);$('typeFilter').addEventListener('change',filterData);$('directorySearch').addEventListener('input',renderDirectory);$('directoryGov').addEventListener('change',renderDirectory);$('directoryProgram').addEventListener('change',renderDirectory);$('exportBtn').addEventListener('click',exportCsv);$('drawerBackdrop').addEventListener('click',closeDetails);document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDetails();if(state.filterOpen)toggleFilters(false)}if(e.key==='/'&&!['INPUT','TEXTAREA'].includes(document.activeElement.tagName)&&state.view==='map'){e.preventDefault();$('mapSearch').focus()}});$('filtersBtn').addEventListener('click',()=>toggleFilters(!state.filterOpen));$('closeFiltersBtn').addEventListener('click',()=>toggleFilters(false));$('clearFiltersBtn').addEventListener('click',()=>{state.gov='';state.program='';$('mapSearch').value='';$('partnerFilter').value='';$('typeFilter').value='';renderRegionPills();renderProgrammePills();filterData();fitRecords(state.filtered);toggleFilters(false)});document.addEventListener('pointerdown',e=>{if(state.filterOpen&&!$('advancedFilters').contains(e.target)&&!$('filtersBtn').contains(e.target))toggleFilters(false)});renderRegionPills();renderProgrammePills();updateSelectors();filterData();renderDirectory();renderInsights();renderQuality();changeLanguage();changeLanguage();setView('map');$('gestureTip').textContent=window.innerWidth<700?t('mobileGesture'):t('gestureTip')}
+function toggleFilters(open){state.filterOpen=open;$('advancedFilters').hidden=!open;$('filtersBtn').classList.toggle('is-active',open);$('filtersBtn').setAttribute('aria-expanded',String(open))}
+try{init()}catch(error){console.error('Dashboard error:',error);showToast('Could not initialize the offline map: '+error.message)}

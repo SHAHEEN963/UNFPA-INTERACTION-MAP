@@ -1,51 +1,90 @@
-# Syria Facilities — Static Interactive Website
+# UNFPA — Syria Facility Map (redesigned static website)
 
-**No API. No authentication or sign-in. No backend. No database.**
+A simplified, mobile-first website with the **user-supplied UNFPA SVG logo** and colors extracted from the logo (`#3571A4` blue, `#E38A15` orange). It remains a **static, offline-map** site: no application API, no authentication, no backend, no facility database, and no third-party map tiles.
 
-The original authenticated project is replaced by this standalone, client-side dashboard. This source tree contains zero original facility records or coordinates.
+## Changes in this version
 
-Open `index.html` directly in a current browser or deploy these files as a static website (GitHub Pages, Netlify, or a private static hosting service). The vector map is bundled and runs offline.
+- Large distraction-free Syria map, simpler header and streamlined statistics.
+- Quick governorate filters, programme chips, search, and collapsible partner/type filters.
+- Desktop hover / keyboard-focus preview of facilities and marker clusters.
+- Marker clustering that adapts to the zoom level. Click a cluster to zoom toward its facilities or to choose among co-located records.
+- Smooth zoom in/out, wheel zoom at the mouse cursor, drag-to-pan, double-click to zoom, Fit Locations button.
+- Touch-friendly zoom buttons and two-finger drag / pinch gestures. One-finger vertical scrolling is preserved on mobile.
+- Mobile bottom navigation, bottom-sheet facility details, compact summary with expandable detailed fields.
+- English / Arabic labels, responsive directory, insights and data quality views.
+- `prefers-reduced-motion` support, keyboard shortcuts (`/` to focus map search, `Esc` to close details), focusable map markers.
 
-## To display the real facility records
+## Files to upload to the **existing** GitHub repository
 
-1. Download `facilities.private.json` **separately** from the code package.
-2. Open `index.html` in the browser.
-3. Select **Load private JSON** and choose `facilities.private.json` from your computer.
-4. Explore the map, directory, statistics, filters and detailed facility descriptions.
+Upload these files from this package's root, preserving the paths:
 
-**Data stays in the active browser tab** and is not sent to an API or saved by the dashboard. Refreshing requires reselecting the JSON file. The map runs without third-party map tiles or external analytics.
-
-## GitHub upload safety
-
-- This repository contains **only source code and a coarse public geographic basemap**.
-- Never commit `facilities.private.json`, the original Excel workbook, PDFs or CSV exports. Facilities include Women and Girls Safe Spaces and exact addresses that must remain confidential.
-- A public GitHub Pages site will not provide authentication. It is a map *interface* only until an authorized person selects the local data file.
-- The code is intentionally separated from actual facility records so that publishing the source does not publish sensitive coordinates.
-- If location confidentiality is critical, avoid uploading the data to cloud hosting or repositories at all.
-
-## Project files
-
-- `index.html`: single-page map/dashboard layout
-- `assets/app.js`: interactive map, imported data, detail panels, CSV export, filters, statistics and bilingual interface
-- `assets/styles.css`: layout, motion and responsive styles
-- `assets/map-geography.js`: offline vector map geometry, no facility locations
-
-For an actual authenticated private deployment, server-side access controls would be required; they are deliberately removed here as requested.
-
-## Upload to GitHub
-
-1. Create a **private** repository at https://github.com/new named `syria-facilities-map` (leave it empty: no README, license, or `.gitignore`).
-2. From this folder in a terminal, run:
-
-```bash
-git init
-git add .
-git commit -m "Build static Syria facilities map"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/syria-facilities-map.git
-git push -u origin main
+```text
+index.html
+README.md
+assets/
+  app.js
+  styles.css
+  map-geography.js
+  unfpa-logo.svg
+  favicon.svg
 ```
 
-Replace `YOUR_USERNAME` with your account username. GitHub may prompt you to sign in through its credential manager; never put passwords or access tokens in a code file.
+Existing repo: https://github.com/SHAHEEN963/UNFPA-INTERACTION-MAP
 
-For optional GitHub Pages publishing, see the repository **Settings > Pages > Build and deployment > Deploy from a branch > main > /(root)**. Remember: the static webpage contains no authentication, and a Pages URL is not private access control. Facility records remain outside the repository and must only be loaded locally by authorized people.
+### GitHub web interface
+
+1. Open the repository and make sure you're on the `main` branch.
+2. Replace the existing `index.html`, `README.md`, and three old files under `assets/` with these new versions.
+3. Add `assets/unfpa-logo.svg` and `assets/favicon.svg`.
+4. Commit changes. GitHub Pages automatically redeploys from `main` + `/(root)` if Pages is already enabled.
+5. Reload the Pages URL; a hard-refresh may be necessary to clear the browser's cached CSS and JS.
+
+For easiest overwrite of entire folders, use GitHub Desktop or Git instead of the web editor:
+
+```bash
+# Run from a local clone of your existing repository:
+# Copy index.html, README.md, and assets/ from this ZIP into your clone.
+git add index.html README.md assets/
+git commit -m "Redesign UNFPA Syria facilities map UX"
+git push origin main
+```
+
+**This ZIP contains no original facility records or precise facility coordinates.**
+
+## Load the original facilities on your device
+
+The private JSON is a **separate file**: `facilities.private.json` from the earlier delivery. The new website accepts the same file format; no conversion needed.
+
+1. Open `index.html` directly in a modern browser, or visit the deployed website.
+2. Click **Load data / Choose JSON file**.
+3. Select your local `facilities.private.json` file.
+4. Browse the four governorates and use the map, directory, statistics, and records.
+5. Refresh the browser to clear loaded data from the application's in-memory session.
+
+The dashboard loads the records into the open tab only. It does not upload them or write them to browser storage. CSV export is a local download and includes a confidentiality warning.
+
+### Important confidentiality information
+
+- Never upload `facilities.private.json`, the source Excel workbook, CSV exports, or unredacted detailed record files to your GitHub repository, GitHub Pages, or other public hosting.
+- The records include potentially sensitive addresses / locations. This static version is **not an access-controlled system**.
+- GitHub Pages generally serves the website to anyone with the URL, even if the source repository is private; hosting the source and hosting the confidential records are different decisions.
+- Import private data only on authorized devices. If online multi-user access to exact coordinates is necessary, use organization-approved authentication and a protected data service instead.
+- This site makes no application API calls and does not load network map tiles or hosted fonts.
+- The UNFPA logo is provided by the project owner for use in this layout; organizational brand clearance is the owner's responsibility.
+
+## Implementation notes
+
+- Standalone HTML + CSS + vanilla JS, no build step or npm dependencies.
+- SVG map geography is bundled as `assets/map-geography.js`.
+- WGS84 latitude/longitude values are projected client-side. The dataset's original values and any correction notes are preserved.
+- Clusters are calculated in rendered screen coordinates and adapt to zoom.
+- Source data validation requires `facility_code`, `main_program` and `governorate_en` per record.
+- No third-party analytics.
+
+## Deployment URL
+
+If GitHub Pages is enabled on the user's existing repository:
+
+`https://shaheen963.github.io/UNFPA-INTERACTION-MAP/`
+
+Changes may take a few minutes to appear after a push.
