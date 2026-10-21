@@ -1,0 +1,50 @@
+{
+  "approval_token": "74c92c559a071350a8dbc68fad92f009fd4182bb459a0d106c81089468ebe3c6",
+  "candidate_sha256": "a139695e64a25ef6e4263ed08697d6cfb07c33052d612394bb47cb025a97a1ad",
+  "diff": {
+    "after": {
+      "by_governorate": {
+        "Hama": 14,
+        "Homs": 14,
+        "Lattakia": 19,
+        "Tartous": 4
+      },
+      "by_program": {
+        "GBV": 17,
+        "RH": 26,
+        "Youth": 8
+      },
+      "mapped": 33,
+      "protected": 18,
+      "total": 51
+    },
+    "before": {
+      "by_governorate": {
+        "Hama": 14,
+        "Homs": 14,
+        "Lattakia": 19,
+        "Tartous": 4
+      },
+      "by_program": {
+        "GBV": 17,
+        "RH": 26,
+        "Youth": 8
+      },
+      "mapped": 34,
+      "protected": 17,
+      "total": 51
+    },
+    "changed_public_field_counts": {},
+    "protected_comparison": "Aggregate counts only; individual protected additions, removals and edits cannot be inferred from a redacted baseline.",
+    "public_records_added_or_newly_published": 0,
+    "public_records_changed": 0,
+    "public_records_removed_or_newly_withheld": 1
+  },
+  "errors": {},
+  "status": "preview",
+  "warnings": {
+    "dms_converted": 4,
+    "existing_unverified_swap_retained": 2,
+    "facility_counts_changed_review_required": 1
+  }
+}
