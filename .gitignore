@@ -1,0 +1,12 @@
+# Source workbooks and local review output must never reach public GitHub/Pages.
+*.[xX][lL][sS][xX]
+*.[xX][lL][sS][mM]
+*.[xX][lL][sS]
+~$*
+private-source/
+private/
+build/
+.venv/
+__pycache__/
+*.pyc
+node_modules/

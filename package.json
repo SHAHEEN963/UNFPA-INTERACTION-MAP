@@ -1,0 +1,6 @@
+{
+  "name": "unfpa-interaction-map-checks",
+  "private": true,
+  "scripts": {"test:map": "node tests/map_smoke.cjs"},
+  "devDependencies": {"playwright": "1.62.1"}
+}

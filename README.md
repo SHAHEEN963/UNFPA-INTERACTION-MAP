@@ -3,10 +3,18 @@
 **Edition:** GITHUB-SAFE SOURCE (public site)
 
 This is a static interactive website. **No API, account, login, JSON import step, or backend.**
+A local XLSX importer now validates updates, produces a redacted preview and diff report,
+and replaces the public snapshot after review. See [Update instructions](docs/UPDATING_DATA.md)
+or [الشرح بالعربية](docs/UPDATING_DATA_AR.md).
 Records from the supplied `Shaheen copy List of Facilities Homs AoR(1).xlsx` have been converted into
 `assets/facilities-data.js`, which loads automatically when `index.html` opens.
 
 ## Facility data
+
+Counts below refer to the verified original workbook from 13 October 2026, not an
+assumed newer source. The current snapshot is unchanged by this code-only PR.
+The importer preview additionally withholds one RH-classified WGSS, producing
+33 mapped and 18 withheld records. Uploading that snapshot requires separate approval.
 
 - Source worksheets: Lattakia (19), Tartous (4), Hama (14), Homs (14).
 - Total 51 records, 26 RH, 17 GBV, 8 Youth; 47 distinct coordinate pairs.
@@ -60,7 +68,13 @@ GitHub Pages will redeploy automatically if enabled. Do not upload the Internal 
 - `assets/facilities-data.js` — **embedded Excel snapshot**, edition-specific
 - `assets/map-geography.js` — offline map outlines and city-reference coordinates
 - `assets/unfpa-logo.svg`, `assets/favicon.svg` — branding assets
-- `.gitignore` — Git filtering rules
+- `tools/import_facilities.py` — local XLSX validation, redaction, diff and atomic update
+- `tools/public-policy.json` — explicit allowlist of approved non-protection public codes
+- `tests/` — synthetic XLSX tests and browser regression checks
+- `docs/UPDATING_DATA*.md` — English and Arabic update guides
+- `.gitignore` — excludes source workbooks, private files and review output
 
-To update the records after your workbook changes, regenerate the data JS from the new Excel
-file and review coordinate quality; this is a *snapshot*, not a live Excel connection.
+To update records, run `python tools/import_facilities.py "/private/path/facilities.xlsx"`,
+review the generated report, then use `--apply --approve "TOKEN_FROM_REPORT"`.
+Install dependencies and follow the [full workflow](docs/UPDATING_DATA.md) first.
+This remains a *reviewed snapshot*, not a live Excel connection.
