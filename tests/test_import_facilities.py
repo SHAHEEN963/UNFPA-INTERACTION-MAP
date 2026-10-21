@@ -36,7 +36,7 @@ class ImportTests(unittest.TestCase):
                             lat_original=str(r['lat']), lon_original=str(r['lon']))
             self.old.append(previous)
         self.baseline.write_text(imp.serialize(self.old), encoding='utf-8')
-        self.policy.write_text(imp.dumps({'version': 1, 'approved_public_codes': [r['id'] for r in self.old]}))
+        self.policy.write_text(imp.dumps({'version': 1, 'approved_public_codes': []}))
         self.write_workbook()
 
     def write_workbook(self):
@@ -262,6 +262,18 @@ class ImportTests(unittest.TestCase):
         report, _ = self.run_import()
         self.assertEqual(report['diff']['after']['protected'], 1)
         self.assertNotIn('NEW-PUBLIC-NOT-APPROVED', (self.review / 'facilities-data.js').read_text())
+
+    def test_implicit_public_approval_is_lost_after_protection_reclassification(self):
+        self.rows['Homs'][0]['main_program'] = 'GBV'
+        self.write_workbook()
+        report, _ = self.run_import()
+        self.run_import(apply=True, approve=report['approval_token'])
+        self.rows['Homs'][0]['main_program'] = 'RH'
+        self.write_workbook()
+        report, code = self.run_import()
+        self.assertEqual(code, 0)
+        self.assertEqual(report['diff']['after']['protected'], 1)
+        self.assertNotIn('TEST-3', (self.review / 'facilities-data.js').read_text())
 
     def test_protected_edits_and_row_order_do_not_change_public_bytes(self):
         self.rows['Homs'][0]['main_program'] = 'GBV'
